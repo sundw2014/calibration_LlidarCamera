@@ -14,9 +14,9 @@ lock = threading.Lock()
 
 def draw(img, corners, imgpts):
     corner = tuple(corners[0].ravel())
-    cv2.line(img, corner, tuple(imgpts[0].ravel()), (255,0,0), 5)
-    cv2.line(img, corner, tuple(imgpts[1].ravel()), (0,255,0), 5)
-    cv2.line(img, corner, tuple(imgpts[2].ravel()), (0,0,255), 5)
+    cv2.line(img, corner, tuple(imgpts[0].ravel()), (255,0,0), 1)
+    cv2.line(img, corner, tuple(imgpts[1].ravel()), (0,255,0), 1)
+    cv2.line(img, corner, tuple(imgpts[2].ravel()), (0,0,255), 1)
     return img
 
 def lidarCallback(data):
@@ -72,18 +72,19 @@ def main():
 
     # Load previously saved data
     with np.load(calibrateResultFile) as X:
-        mtx, dist, _, _ = [X[i] for i in ('mtx','dist','rvecs','tvecs')]
+        mtx, dist = [X[i] for i in ('mtx','dist')]
 
     criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
     objp = np.zeros((6*7,3), np.float32)
     objp[:,:2] = np.mgrid[0:7,0:6].T.reshape(-1,2)
-    axis = np.float32([[3,0,0], [0,3,0], [0,0,-3]]).reshape(-1,3)
+    axis = np.float32([[13,0,0], [0,13,0], [0,0,-13]]).reshape(-1,3)
 
     cap = cv2.VideoCapture(1)
 
     Pf = None
     N = None
-
+    Rs = list()
+    Ts = list()
     while not rospy.is_shutdown():
         ret, img = cap.read()
         if ret != True:
@@ -123,13 +124,14 @@ def main():
                 N = n
             else:
                 N = np.concatenate((N,n))
-
+            Rs.append(rvecs)
+            Ts.append(tvecs)
             # print N
         elif key & 0xFF == ord('f'):
             break
 
     cv2.destroyAllWindows()
-    np.savez('data/tmp.npz',Pf=Pf,N=N)
+    np.savez('data/tmp.npz',Pf=Pf,N=N,Rs=np.array(Rs),Ts=np.array(Ts))
     H = solveExtrinsic(Pf, N)
     np.save(extrinsicFile, H)
 

@@ -64,7 +64,7 @@ def main():
 
     # Load previously saved data
     with np.load(calibrateResultFile) as X:
-        mtx, dist, _, _ = [X[i] for i in ('mtx','dist','rvecs','tvecs')]
+        mtx, dist = [X[i] for i in ('mtx','dist')]
 
     # Load previously saved data
     H = np.load(extrinsicFile)
