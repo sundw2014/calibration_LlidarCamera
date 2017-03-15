@@ -39,6 +39,8 @@ while True:
         ret,rvecs, tvecs = cv2.solvePnP(objp, corners, mtx, dist)
         # project 3D points to image plane
         imgpts, jac = cv2.projectPoints(axis, rvecs, tvecs, mtx, dist)
+        print rvecs
+        print tvecs
         img = draw(img,corners,imgpts)
         cv2.imshow('img',img)
     k = cv2.waitKey(50)

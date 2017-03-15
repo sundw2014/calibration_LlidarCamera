@@ -2,11 +2,12 @@
 import rospy
 import cv2
 import numpy as np
-from sensor_msgs import LaserScan
+from sensor_msgs.msg import LaserScan
 import threading
+import math
 
 calibrateResultFile = 'data/cap.npz'
-extrinsicFile = 'data/extrinsic.npz'
+extrinsicFile = 'data/extrinsic.npy'
 lidarData = None
 
 lock = threading.Lock()
@@ -19,30 +20,51 @@ def draw(img, corners, imgpts):
     return img
 
 def lidarCallback(data):
-    rospy.loginfo("lidarCallback")
+    # rospy.loginfo("lidarCallback")
     global lidarData
     lock.acquire()
     lidarData = data
     lock.release()
 
-def findChessboardInScan(ranges):
-    pass
+def RTheta2XY(r, theta):
+    x = r * math.cos(theta)
+    y = r * math.sin(theta)
+    # print theta, math.sin(theta)
+    # print [x,y,1]
+    return [x,y,1]
+
+def findChessboardInScan(li_data):
+    ranges = li_data.ranges
+    for index, r in enumerate(ranges):
+        angularResolution = 270.0/811.0
+        # print angularResolution
+        if r >= li_data.range_max or r <= li_data.range_min:
+            continue
+        if r < 1.3:
+            print 'ang = ', index*angularResolution, ', range:',ranges[index+3:index+11]
+            # print ranges[index+3], ranges[index+5]
+            A = np.array(RTheta2XY(ranges[index+3], (index+3)*angularResolution/180.0*math.pi)).reshape(1,3)
+            A = np.concatenate((A, np.array(RTheta2XY(ranges[index+10], (index+10)*angularResolution/180.0*math.pi)).reshape(1,3)))
+            return A
+    return None
 
 def solveExtrinsic(Pf,N):
+    print 'Pf', Pf
+    print 'N', N
     if Pf.shape[0] != N.shape[0]:
         raise ValueError('Pf.shape[0] != N.shape[0]:')
-    A = np.zeros([Pf.shape[0], Pf.shape[1]*N.shape[1])
-    A[:,0:2] = np.multiply(np.tile(Pf[:,0],(1,3)),N)
-    A[:,3:5] = np.multiply(np.tile(Pf[:,1],(1,3)),N)
-    A[:,6:8] = np.multiply(np.tile(Pf[:,2],(1,3)),N)
-    b = np.sum(np.multiply(N, N))q
-    X = np.linalg(A, b)[0]
-    H = np.zeros(3,3)
-    H[0,:] = X[0,2]
-    H[1,:] = X[3,5]
-    H[2,:] = X[6,8]
+    A = np.zeros([Pf.shape[0], Pf.shape[1]*N.shape[1]])
+    A[:,0:3] = np.multiply(np.tile(Pf[:,0],(3,1)).transpose(),N)
+    A[:,3:6] = np.multiply(np.tile(Pf[:,1],(3,1)).transpose(),N)
+    A[:,6:9] = np.multiply(np.tile(Pf[:,2],(3,1)).transpose(),N)
+    b = np.sum(np.multiply(N, N),1)
+    X = np.linalg.lstsq(A, b)[0]
+    H = np.zeros([3,3])
+    H[0,:] = X[0:3]
+    H[1,:] = X[3:6]
+    H[2,:] = X[6:9]
 
-    return H
+    return H.transpose()
 
 def main():
     rospy.init_node('node_calibrationExtrinsic')
@@ -84,24 +106,30 @@ def main():
         key = cv2.waitKey(50)
         if ret and (key & 0xFF == ord('y')):
             lock.acquire()
-            ranges = lidarData.ranges
+            li_data = lidarData
             lock.release()
             if Pf == None:
-                Pf = findChessboardInScan(ranges)
+                Pf = findChessboardInScan(li_data)
             else:
-                Pf = np.concatenate(Pf,findChessboardInScan(ranges))
+                Pf = np.concatenate((Pf, findChessboardInScan(li_data)))
+            # print 'Pf:',Pf
 
-            n = np.dot(rvecs[:,3].transpose(),tvecs) * -1 * rvecs[:,3]
+            rmat,_ = cv2.Rodrigues(rvecs)
+            n = np.dot(rmat[:,2],tvecs) * -1 * rmat[:,2]
+            n = n.reshape(1,3)
+            n = np.tile(n,(2, 1))
 
             if N == None:
                 N = n
             else:
-                N = np.concatenate(N,n)
+                N = np.concatenate((N,n))
 
+            # print N
         elif key & 0xFF == ord('f'):
             break
 
     cv2.destroyAllWindows()
+    np.savez('data/tmp.npz',Pf=Pf,N=N)
     H = solveExtrinsic(Pf, N)
     np.save(extrinsicFile, H)
 
