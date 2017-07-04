@@ -53,6 +53,8 @@ def solveExtrinsic(Pf,N):
     print 'N', N
     if Pf.shape[0] != N.shape[0]:
         raise ValueError('Pf.shape[0] != N.shape[0]:')
+    # Pf is points in lidar coordinate frame, H is a matrix bring them to camera coordinate
+    # n is the foot of the perpendicular from origin to the chessboard plane in the camera coordinate frame, so n' * H' * Pf = n' * n
     A = np.zeros([Pf.shape[0], Pf.shape[1]*N.shape[1]])
     A[:,0:3] = np.multiply(np.tile(Pf[:,0],(3,1)).transpose(),N)
     A[:,3:6] = np.multiply(np.tile(Pf[:,1],(3,1)).transpose(),N)
@@ -70,10 +72,11 @@ def main():
     rospy.init_node('node_calibrationExtrinsic')
     rospy.Subscriber("/scan", LaserScan, lidarCallback, queue_size=1)
 
-    # Load previously saved data
+    # Load previously saved camera intrinsic params
     with np.load(calibrateResultFile) as X:
         mtx, dist = [X[i] for i in ('mtx','dist')]
 
+    # objp is points in chessboard frame
     criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
     objp = np.zeros((6*7,3), np.float32)
     objp[:,:2] = np.mgrid[0:7,0:6].T.reshape(-1,2)
@@ -92,29 +95,35 @@ def main():
             raise IOException('can\'t read camera')
 
         cv2.imshow('img',img)
+
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         # Find the chess board corners
         ret, corners = cv2.findChessboardCorners(gray, (7,6), None)
         if ret:
-            cv2.cornerSubPix(gray,corners,(11,11),(-1,-1),criteria)
-            # Find the rotation and translation vectors.
-            ret,rvecs, tvecs = cv2.solvePnP(objp, corners, mtx, dist)
-            # project 3D points to image plane
+            # refine corners
+            corners = cv2.cornerSubPix(gray,corners,(11,11),(-1,-1),criteria)
+            # Find the rotation and translation vectors, which can bring points from object coordinate to camera coordinate
+            ret, rvecs, tvecs = cv2.solvePnP(objp, corners, mtx, dist)
+            # project 3D points from object coordinate to image coordinate
             imgpts, jac = cv2.projectPoints(axis, rvecs, tvecs, mtx, dist)
+            # draw 3 lines(axis) between axis terminal points and the original
             img = draw(img,corners,imgpts)
             cv2.imshow('img',img)
 
         key = cv2.waitKey(50)
+        # if this frame looks good for finding chessboard in scan datas, press 'y'
         if ret and (key & 0xFF == ord('y')):
             lock.acquire()
             li_data = lidarData
             lock.release()
+            # two points from scan datas for every frame, two points is enough for a line but more points can be better because of noise
             if Pf == None:
                 Pf = findChessboardInScan(li_data)
             else:
                 Pf = np.concatenate((Pf, findChessboardInScan(li_data)))
             # print 'Pf:',Pf
 
+            # n is the foot of the perpendicular from origin to the chessboard plane in the camera coordinate frame
             rmat,_ = cv2.Rodrigues(rvecs)
             n = np.dot(rmat[:,2],tvecs) * -1 * rmat[:,2]
             n = n.reshape(1,3)
